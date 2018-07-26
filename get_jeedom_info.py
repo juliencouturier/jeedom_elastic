@@ -131,14 +131,14 @@ def init_es_connection(index_name = 'jeedom'):
     return ES
 
 
-def save_items(items_to_save, filename='jeedom_metrics.json')
+def save_items(items_to_save, filename='jeedom_metrics.json'):
     """Save items into a file as json list"""
     with open(filename,'a') as myfile:
         for my_info, my_id  in items_to_save:
             item_as_string = json.dumps({'id' : my_id, 'document': my_info})
             myfile.write(item_as_string+'\n')
 
-def load_items(filename='jeedom_metrics.json')
+def load_items(filename='jeedom_metrics.json'):
     """Load items from a file"""
     result_list = []
     line = ''    
