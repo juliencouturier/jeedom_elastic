@@ -98,6 +98,7 @@ class ElasticIndexer(object):
             self.ES = elasticsearch.Elasticsearch(elastic_url.split(','))
             my_tz = pytz.timezone("Europe/Paris")
             self.metrics_date = my_tz.localize(datetime.now())
+            self.index_template = index_name
             self.index_name = self.metrics_date.strftime(index_name)
             if not self.ES.indices.exists(self.index_name):
                 self.ES.indices.create(self.index_name)
@@ -124,9 +125,9 @@ class ElasticIndexer(object):
         self.error_cnt += 1
         return False
 
-    def push(self, my_info, my_id, save=True):
+    def push(self, my_info, my_id, save=True, index_name=None):
         self.batch.append({
-            '_index': self.index_name,
+            '_index': index_name or self.index_name,
             '_type': 'jeedom_metric',
             '_id': my_id,
             '_source': my_info
@@ -190,7 +191,7 @@ def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php'
                             ES.push(my_info, my_id)
                             cnt += 1
                         except:
-                            logger.exception('Can not index')
+                            logger.exception('Can not index %s (%s)' % (acmd, aneq['status']))
         logger.info('%s document indexed' % cnt)
     else:
         logger.error('%s : %s' % (r.status_code, r.content))
@@ -227,7 +228,7 @@ def main(*args, **kwargs):
     ES = ElasticIndexer(kwargs.get('elastic_url'), index_name=index_name)
     if get_info(ES, jeedom_url=kwargs.get('jeedom_url', 'http://127.0.0.1/core/api/jeeApi.php'), jeedom_key=kwargs.get('jeedom_key'), index_name=index_name) > 0:
         for my_info, my_id in load_items():
-            ES.push(my_info, my_id, save=False)
+            ES.push(my_info, my_id, save=False, index_name=my_info['timestamp'].strftime(ES.index_template))
         ES.flush()
         if ES.ok and os.path.isfile('jeedom_metrics.json'):
             os.remove('jeedom_metrics.json')
