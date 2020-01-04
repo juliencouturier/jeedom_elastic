@@ -8,6 +8,7 @@ import requests
 import elasticsearch
 from datetime import datetime
 import json
+from json import JSONEncoder
 try:
   import yaml
 except:
@@ -71,6 +72,15 @@ jeedom_mapping = {
                 }
         }
 
+class JSONDateTimeEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.strftime('%Y-%m-%dT%H:%M:%S')
+        elif isinstance(obj, datetime.date):
+            return obj.strftime('%Y-%m-%d')
+        # Let the base class default method raise the TypeError
+        return JSONEncoder.default(self, obj)
+
 def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php', index_name='jeedom'):
     r = requests.get('%s?apikey=%s&type=fullData' % (jeedom_url, jeedom_key))
     my_tz = pytz.timezone("Europe/Paris")
@@ -91,14 +101,14 @@ def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php'
                             for akey, aval in my_info.items():
                                 id_calc.update(akey.encode('latin-1'))
                                 if isinstance(aval, unicode):
-                                  id_calc.update(aval.encode('latin-1'))
+                                id_calc.update(aval.encode('latin-1'))
                                 elif isinstance(aval, datetime):
-                                  id_calc.update(aval.strftime('%Y-%m-%d %H:%M:%S'))
+                                id_calc.update(aval.strftime('%Y-%m-%d %H:%M:%S'))
                                 else:
-                                  id_calc.update(str(aval))
+                                id_calc.update(str(aval))
                             if isinstance(my_val, unicode):
                                 if len(my_val) == 0:
-                                  continue
+                                continue
                                 my_info['value_text'] = acmd['state']
                             elif isinstance(my_val, float) or isinstance(my_val, int):
                                 my_info['value_numeric'] = acmd['state']
@@ -123,7 +133,10 @@ def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php'
 def init_es_connection(elastic_url, index_name = 'jeedom'):
     """ Initialize ES connection and set the mapping for jeedom objects"""
     try:
-        ES = elasticsearch.Elasticsearch([elastic_url])
+        if isinstance(elastic_url, list):
+            ES = elasticsearch.Elasticsearch(elastic_url)
+        else:
+            ES = elasticsearch.Elasticsearch([elastic_url])
         my_tz = pytz.timezone("Europe/Paris")
         metrics_date = my_tz.localize(datetime.now())        
         if not ES.indices.exists(metrics_date.strftime(index_name)):
@@ -147,7 +160,7 @@ def save_items(items_to_save, filename='jeedom_metrics.json'):
     """Save items into a file as json list"""
     with open(filename,'a') as myfile:
         for my_info, my_id  in items_to_save:
-            item_as_string = json.dumps({'id' : my_id, 'document': my_info})
+            item_as_string = json.dumps({'id' : my_id, 'document': my_info}, cls=JSONDateTimeEncoder)
             myfile.write(item_as_string+'\n')
 
 def load_items(filename='jeedom_metrics.json'):
@@ -156,8 +169,7 @@ def load_items(filename='jeedom_metrics.json'):
     line = ''    
     if os.path.isfile(filename):
         with open(filename,'r') as myfile:
-            while line:
-                line = myfile.readline()
+            for line in myfile:
                 try:
                     item_as_dict = json.loads(line)
                     result_list.append((item_as_dict['document'], item_as_dict['id']))
@@ -175,7 +187,8 @@ def main(*args, **kwargs):
         while len(backup) > 0:        
             my_info, my_id = backup.pop()
             try:
-                ES.index(my_info['timestamp'].strftime(index_name), 'jeedom_metric', my_info, my_id)
+                my_date = datetime.strptime(my_info['timestamp'], '%Y-%m-%dT%H:%M:%S')
+                ES.index(my_date.strftime(index_name), 'jeedom_metric', my_info, my_id)
             except:
                 logging.exception(u'Cannot index document')
                 break  
