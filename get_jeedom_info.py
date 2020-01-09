@@ -93,7 +93,6 @@ class ElasticIndexer(object):
         self.batch_size=batch_size
         self.batch = []
         self.error_cnt = 0
-        self.cnter = 0
         try:
             self.ES = elasticsearch.Elasticsearch(elastic_url.split(','))
             my_tz = pytz.timezone("Europe/Paris")
