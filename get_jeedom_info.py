@@ -215,6 +215,7 @@ def load_items(filename='jeedom_metrics.json'):
             for line in myfile:
                 try:
                     item_as_dict = json.loads(line)
+                    item_as_dict['document']['timestamp'] = datetime.strptime(item_as_dict['document']['timestamp'],'%Y-%m-%dT%H:%M:%S')
                     yield (item_as_dict['document'], item_as_dict['id'])
                 except:
                     logger.exception(u'Cannot parse line %s' % line)
