@@ -10,6 +10,8 @@ from elasticsearch.helpers import bulk
 from datetime import datetime
 from json import JSONEncoder
 import json
+import glob
+import six
 try:
   import yaml
 except:
@@ -78,6 +80,15 @@ jeedom_mapping = {
                 }
         }
 
+freediskspace = None
+
+def get_free_disk_space():
+    import psutil
+    global freediskspace
+    disk_usage = psutil.disk_usage('.')
+    freediskspace = disk_usage.free
+    return freediskspace
+
 class JSONDateTimeEncoder(JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime):
@@ -88,11 +99,16 @@ class JSONDateTimeEncoder(JSONEncoder):
         return JSONEncoder.default(self, obj)
 
 class ElasticIndexer(object):
-    def __init__(self, elastic_url, index_name = 'jeedom', batch_size=100):
+    def __init__(self, elastic_url, index_name = 'jeedom', batch_size=100, filename='jeedom_metrics.json'):
         """ Initialize ES connection and set the mapping for jeedom objects"""
         self.batch_size=batch_size
         self.batch = []
         self.error_cnt = 0
+        split_filename = filename.split('.')
+        split_filename[-2] += '_%Y%m%d%H%M%S'
+        self.filename = '.'.join(split_filename)
+        self.filename = datetime.now().strftime(self.filename)
+
         try:
             self.ES = elasticsearch.Elasticsearch(elastic_url.split(','))
             my_tz = pytz.timezone("Europe/Paris")
@@ -113,7 +129,7 @@ class ElasticIndexer(object):
         except:
             logger.exception(u'Cannot connect to elastic')
             self.ES = None
-    
+
     def index(self, my_info, my_id):
         if self.ES is not None:
             try:
@@ -121,7 +137,6 @@ class ElasticIndexer(object):
                 return True
             except:
                 logger.exception(u'Cannot index document')
-        self.error_cnt += 1
         return False
 
     def push(self, my_info, my_id, save=True, index_name=None):
@@ -133,7 +148,7 @@ class ElasticIndexer(object):
         })
         if len(self.batch) > self.batch_size:
             self.flush(save)
-    
+
     def flush(self, save=True):
         if self.ES is not None:
             try:
@@ -145,14 +160,12 @@ class ElasticIndexer(object):
                 self.batch = []
         self.error_cnt += 1
         if save:
-            save_items([(es_bulk['_source'], es_bulk['_id']) for es_bulk in self.batch])
+            save_items([(es_bulk['_source'], es_bulk['_id']) for es_bulk in self.batch], self.filename)
         return False
-    
+
     @property
     def ok(self):
         return self.error_cnt == 0
-
-
 
 def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php', index_name='jeedom'):
     r = requests.get('%s?apikey=%s&type=fullData' % (jeedom_url, jeedom_key))
@@ -166,19 +179,21 @@ def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php'
                     if 'state' in acmd:
                         my_val = acmd['state']
                         try:
+                            if isinstance(aneq['status'], list):
+                                continue
                             cmd_date = datetime.strptime(aneq['status']['lastCommunication'], '%Y-%m-%d %H:%M:%S')
                             cmd_date = my_tz.localize(cmd_date)
                             my_info = {'objet' : anobject['name'], 'equipement' : aneq['name'], 'commande' : acmd['name'], 'lastCommunication' : cmd_date, 'timestamp' : metrics_date}
                             id_calc = md5()
                             for akey, aval in my_info.items():
                                 id_calc.update(akey.encode('latin-1'))
-                                if isinstance(aval, unicode):
+                                if isinstance(aval, six.text_type):
                                     id_calc.update(aval.encode('latin-1'))
                                 elif isinstance(aval, datetime):
                                     id_calc.update(aval.strftime('%Y-%m-%d %H:%M:%S'))
                                 else:
                                     id_calc.update(str(aval))
-                            if isinstance(my_val, unicode):
+                            if isinstance(my_val, six.text_type):
                                 if len(my_val) == 0:
                                     continue
                                 my_info['value_text'] = acmd['state']
@@ -194,44 +209,68 @@ def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php'
         logger.info('%s document indexed' % cnt)
     else:
         logger.error('%s : %s' % (r.status_code, r.content))
-    ES.flush()
-    if ES.ok:
-        return cnt
-    else:
-        return 0
+    return cnt
 
 
 def save_items(items_to_save, filename='jeedom_metrics.json'):
     """Save items into a file as json list"""
+    global freediskspace
+    if freediskspace is None:
+        get_free_disk_space()
+    # S'il reste moins de 1Go, on ne sauvegarde pas
+    if freediskspace < 1024 * 1024 * 1024:
+        logger.warning('Espace disponible insuffisant pour sauvegarder les données (% Mb)' % freediskspace/1024/1024)
+        return
     with open(filename,'a') as myfile:
         for my_info, my_id  in items_to_save:
             item_as_string = json.dumps({'id' : my_id, 'document': my_info}, cls=JSONDateTimeEncoder)
             myfile.write(item_as_string+'\n')
 
-def load_items(filename='jeedom_metrics.json'):
+def load_items(filename='jeedom_metrics.json*'):
     """Load items from a file"""
-    if os.path.isfile(filename):
-        with open(filename,'r') as myfile:
-            for line in myfile:
-                try:
-                    item_as_dict = json.loads(line)
-                    item_as_dict['document']['timestamp'] = datetime.strptime(item_as_dict['document']['timestamp'],'%Y-%m-%dT%H:%M:%S')
-                    yield (item_as_dict['document'], item_as_dict['id'])
-                except:
-                    logger.exception(u'Cannot parse line %s' % line)
-                    continue
+    for afile in glob.glob(filename):
+        if os.path.isfile(afile):
+            logger.info('Integration de %s' % afile)
+            with open(afile,'r') as myfile:
+                for line in myfile:
+                    try:
+                        item_as_dict = json.loads(line)
+                        item_as_dict['document']['timestamp'] = datetime.strptime(item_as_dict['document']['timestamp'],'%Y-%m-%dT%H:%M:%S')
+                        yield (item_as_dict['document'], item_as_dict['id'])
+                    except:
+                        logger.exception(u'Cannot parse line %s' % line)
+                        continue
+            os.remove(afile)
 
-
-def main(*args, **kwargs):
-    index_name=kwargs.get('elastic_index', 'jeedom')
-    # ES = init_es_connection(kwargs.get('elastic_url'), index_name=index_name)
-    ES = ElasticIndexer(kwargs.get('elastic_url'), index_name=index_name)
-    if get_info(ES, jeedom_url=kwargs.get('jeedom_url', 'http://127.0.0.1/core/api/jeeApi.php'), jeedom_key=kwargs.get('jeedom_key'), index_name=index_name) > 0:
+class JeedomAction:
+    @staticmethod
+    def restore(*args, **kwargs):
+        index_name=kwargs.get('elastic_index', 'jeedom')
+        # ES = init_es_connection(kwargs.get('elastic_url'), index_name=index_name)
+        ES = ElasticIndexer(kwargs.get('elastic_url'), index_name=index_name)
         for my_info, my_id in load_items():
-            ES.push(my_info, my_id, save=False, index_name=my_info['timestamp'].strftime(ES.index_template))
+            ES.push(my_info, my_id, index_name=my_info['timestamp'].strftime(ES.index_template))
         ES.flush()
-        if ES.ok and os.path.isfile('jeedom_metrics.json'):
-            os.remove('jeedom_metrics.json')
+
+
+    @staticmethod
+    def get_from_jeedom(*args, **kwargs):
+        index_name=kwargs.get('elastic_index', 'jeedom')
+        # ES = init_es_connection(kwargs.get('elastic_url'), index_name=index_name)
+        ES = ElasticIndexer(kwargs.get('elastic_url'), index_name=index_name)
+        get_info(ES, jeedom_url=kwargs.get('jeedom_url', 'http://127.0.0.1/core/api/jeeApi.php'), jeedom_key=kwargs.get('jeedom_key'), index_name=index_name)
+        ES.flush()
+    #        for my_info, my_id in load_items():
+    #            ES.push(my_info, my_id, save=False, index_name=my_info['timestamp'].strftime(ES.index_template))
+    #        ES.flush()
+    #        if ES.ok and os.path.isfile('jeedom_metrics.json'):
+    #            os.remove('jeedom_metrics.json')
+    #        backup = load_items()
+    #        while len(backup) > 0:
+    #            my_info, my_id = backup.pop()
+    #            ES.push(my_info, my_id)
+    #        if ES.flush() and os.path.isfile('jeedom_metrics.json'):
+    #            os.remove('jeedom_metrics.json')
 
 
 
@@ -247,6 +286,7 @@ if __name__ == '__main__':
                         help='Elastic index to store data')
     parser.add_argument('-c', '--config', type=argparse.FileType('r'),
                         help='JSON or YAML config File with those parameters')
+    parser.add_argument('action', nargs='?', type=str, choices=['get_from_jeedom', 'restore'], default='get_from_jeedom')
     args = parser.parse_args()
     # create console handler and set level to debug
     ch = logging.StreamHandler()
@@ -261,11 +301,14 @@ if __name__ == '__main__':
     # add ch to logger
     logger.addHandler(ch)
 
+    method = getattr(JeedomAction, args.action)
+
     if args.config is not None:
         try:
             config_dict = json.load(args.config)
         except:
             config_dict = yaml.parse(args.config)
-        main(**config_dict)
+        method(**config_dict)
     else:
-        main(**args.__dict__)
+        method(**args.__dict__)
+
