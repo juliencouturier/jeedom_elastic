@@ -103,7 +103,7 @@ def get_info(ES):
                                 logging.exception(u'Impossible d\'indexer la métrique')
                                 backup_items.append((my_info, my_id))
                         except:
-                            logging.error(traceback.format_exc())
+                            logging.exception('Error on indexing items')
     else:
         logging.error('%s : %s' % (r.status_code, r.content))
     if len(backup_items) > 0:
