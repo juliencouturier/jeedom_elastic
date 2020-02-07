@@ -226,7 +226,7 @@ def save_items(items_to_save, filename='jeedom_metrics.json'):
             item_as_string = json.dumps({'id' : my_id, 'document': my_info}, cls=JSONDateTimeEncoder)
             myfile.write(item_as_string+'\n')
 
-def load_items(filename='jeedom_metrics.json*'):
+def load_items(filename='jeedom_metrics*.json'):
     """Load items from a file"""
     for afile in glob.glob(filename):
         if os.path.isfile(afile):
