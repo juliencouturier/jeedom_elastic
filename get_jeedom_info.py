@@ -99,7 +99,7 @@ class JSONDateTimeEncoder(JSONEncoder):
         return JSONEncoder.default(self, obj)
 
 class ElasticIndexer(object):
-    def __init__(self, elastic_url, index_name = 'jeedom', batch_size=100, filename='jeedom_metrics.json'):
+    def __init__(self, elastic_url, index_name = 'jeedom', batch_size=500, filename='jeedom_metrics.json'):
         """ Initialize ES connection and set the mapping for jeedom objects"""
         self.batch_size=batch_size
         self.batch = []
@@ -156,11 +156,11 @@ class ElasticIndexer(object):
                 self.batch = []
                 return True
             except:
-                logger.exception(u'Cannot index documents')
-                self.batch = []
+                logger.exception(u'Cannot index documents')                
         self.error_cnt += 1
-        if save:
+        if save and len(self.batch)>0:
             save_items([(es_bulk['_source'], es_bulk['_id']) for es_bulk in self.batch], self.filename)
+        self.batch = []
         return False
 
     @property
@@ -249,8 +249,8 @@ class JeedomAction:
         # ES = init_es_connection(kwargs.get('elastic_url'), index_name=index_name)
         ES = ElasticIndexer(kwargs.get('elastic_url'), index_name=index_name)
         for my_info, my_id in load_items():
-            ES.push(my_info, my_id, index_name=my_info['timestamp'].strftime(ES.index_template))
-        ES.flush()
+            ES.push(my_info, my_id, index_name=my_info['timestamp'].strftime(ES.index_template), save=False)
+        ES.flush(save=False)
 
 
     @staticmethod
