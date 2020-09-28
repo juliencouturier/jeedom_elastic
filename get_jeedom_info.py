@@ -12,6 +12,7 @@ from json import JSONEncoder
 import json
 import glob
 import six
+import zipfile
 try:
   import yaml
 except:
@@ -32,31 +33,16 @@ jeedom_mapping = {
                 "jeedom_metric": {
                         "properties": {
                                 "commande": {
-                                        "type": "text",
-                                        "fields": {
-                                                "keyword": {
-                                                        "type": "keyword",
-                                                        "ignore_above": 256
-                                                }
-                                        }
+                                    "type": "keyword",
+                                    "ignore_above": 256
                                 },
                                 "equipement": {
-                                        "type": "text",
-                                        "fields": {
-                                                "keyword": {
-                                                        "type": "keyword",
-                                                        "ignore_above": 256
-                                                }
-                                        }
+                                    "type": "keyword",
+                                    "ignore_above": 256
                                 },
                                 "objet": {
-                                        "type": "text",
-                                        "fields": {
-                                                "keyword": {
-                                                        "type": "keyword",
-                                                        "ignore_above": 256
-                                                }
-                                        }
+                                    "type": "keyword",
+                                    "ignore_above": 256
                                 },
                                 "timestamp": {
                                         "type": "date"
@@ -68,13 +54,8 @@ jeedom_mapping = {
                                         "type": "float"
                                 },
                                 "value_text": {
-                                        "type": "text",
-                                        "fields": {
-                                                "keyword": {
-                                                        "type": "keyword",
-                                                        "ignore_above": 256
-                                                }
-                                        }
+                                    "type": "keyword",
+                                    "ignore_above": 256
                                 }
                         }
                 }
@@ -99,7 +80,7 @@ class JSONDateTimeEncoder(JSONEncoder):
         return JSONEncoder.default(self, obj)
 
 class ElasticIndexer(object):
-    def __init__(self, elastic_url, index_name = 'jeedom', batch_size=500, filename='jeedom_metrics.json'):
+    def __init__(self, elastic_url, index_name = 'jeedom', batch_size=500, filename='jeedom_metrics.zip'):
         """ Initialize ES connection and set the mapping for jeedom objects"""
         self.batch_size=batch_size
         self.batch = []
@@ -108,6 +89,10 @@ class ElasticIndexer(object):
         split_filename[-2] += '_%Y%m%d%H%M%S'
         self.filename = '.'.join(split_filename)
         self.filename = datetime.now().strftime(self.filename)
+        self.freediskspace = None
+        self.zipfile = None
+        self.zipjsonfile = None
+        self.zip_idx = 1
 
         try:
             self.ES = elasticsearch.Elasticsearch(elastic_url.split(','))
@@ -115,17 +100,17 @@ class ElasticIndexer(object):
             self.metrics_date = my_tz.localize(datetime.now())
             self.index_template = index_name
             self.index_name = self.metrics_date.strftime(index_name)
-            if not self.ES.indices.exists(self.index_name):
-                self.ES.indices.create(self.index_name)
-            try:
-                mapping = self.ES.indices.get_mapping(index=self.index_name, doc_type='jeedom_metric')
-            except:
-                mapping = []
-            if len(mapping) == 0:
-                try:
-                    self.ES.indices.put_mapping(index=self.index_name, doc_type='jeedom_metric', body = jeedom_mapping)
-                except:
-                    logger.exception(u'Cannot set elastic mapping')
+            # if not self.ES.indices.exists(self.index_name):
+            #     self.ES.indices.create(self.index_name)
+            # try:
+            #     mapping = self.ES.indices.get_mapping(index=self.index_name, doc_type='jeedom_metric')
+            # except:
+            #     mapping = []
+            # if len(mapping) == 0:
+            #     try:
+            #         self.ES.indices.put_mapping(index=self.index_name, doc_type='jeedom_metric', body = jeedom_mapping)
+            #     except:
+            #         logger.exception(u'Cannot set elastic mapping')
         except:
             logger.exception(u'Cannot connect to elastic')
             self.ES = None
@@ -147,7 +132,7 @@ class ElasticIndexer(object):
             '_source': my_info
         })
         if len(self.batch) > self.batch_size:
-            self.flush(save)
+            return self.flush(save)
 
     def flush(self, save=True):
         if self.ES is not None:
@@ -159,13 +144,47 @@ class ElasticIndexer(object):
                 logger.exception(u'Cannot index documents')                
         self.error_cnt += 1
         if save and len(self.batch)>0:
-            save_items([(es_bulk['_source'], es_bulk['_id']) for es_bulk in self.batch], self.filename)
+            self.save_items([(es_bulk['_source'], es_bulk['_id']) for es_bulk in self.batch])
         self.batch = []
         return False
 
     @property
     def ok(self):
         return self.error_cnt == 0
+
+
+
+    def save_items(self, items_to_save):
+        """Save items into a file as json list"""
+        if self.freediskspace is None:
+            self.freediskspace = get_free_disk_space()
+        # S'il reste moins de 1Go, on ne sauvegarde pas
+        if self.freediskspace < 1024 * 1024 * 1024:
+            logger.warning('Espace disponible insuffisant pour sauvegarder les données (%% Mb)' % freediskspace/1024/1024)
+            return
+        if self.zipfile is None:
+            self.zipfile =  zipfile.ZipFile(self.filename, 'a', zipfile.ZIP_DEFLATED)
+            try:
+                self.zipjsonfile = self.zipfile.open('jeedom_metrics.json', 'w')
+            except:
+                logger.warning('Impossible d\'ouvrir en écriture un fichier "zippé"')
+        if self.zipjsonfile is None:
+            self.zipfile.writestr('jeedom_metrics_%s.json'% self.zip_idx, '\n'.join(format_items(items_to_save)))
+            self.zip_idx += 1 
+        else:
+            for line in format_items(items_to_save):
+                self.zipjsonfile.write(line+'\n')
+
+    def close(self):
+        if self.zipjsonfile is not None:
+            self.zipjsonfile.close()
+        if self.zipfile is not None:
+            self.zipfile.close()
+
+def format_items(items_to_save):
+    for my_info, my_id  in items_to_save:
+        yield json.dumps({'id' : my_id, 'document': my_info}, cls=JSONDateTimeEncoder)
+
 
 def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php', index_name='jeedom'):
     r = requests.get('%s?apikey=%s&type=fullData' % (jeedom_url, jeedom_key))
@@ -212,26 +231,37 @@ def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php'
     return cnt
 
 
-def save_items(items_to_save, filename='jeedom_metrics.json'):
-    """Save items into a file as json list"""
-    global freediskspace
-    if freediskspace is None:
-        get_free_disk_space()
-    # S'il reste moins de 1Go, on ne sauvegarde pas
-    if freediskspace < 1024 * 1024 * 1024:
-        logger.warning('Espace disponible insuffisant pour sauvegarder les données (% Mb)' % freediskspace/1024/1024)
-        return
-    with open(filename,'a') as myfile:
-        for my_info, my_id  in items_to_save:
-            item_as_string = json.dumps({'id' : my_id, 'document': my_info}, cls=JSONDateTimeEncoder)
-            myfile.write(item_as_string+'\n')
+# def save_items(items_to_save, filename='jeedom_metrics.zip'):
+#     """Save items into a file as json list"""
+#     global freediskspace
+#     if freediskspace is None:
+#         get_free_disk_space()
+#     # S'il reste moins de 1Go, on ne sauvegarde pas
+#     if freediskspace < 1024 * 1024 * 1024:
+#         logger.warning('Espace disponible insuffisant pour sauvegarder les données (% Mb)' % freediskspace/1024/1024)
+#         return
+#     with zipfile.ZipFile(filename, 'a', zipfile.ZIP_DEFLATED) as my_zip:
+#         try:
+#             with myzip.open('jeedom_metrics.json', 'w') as myfile:
+#                 for my_info, my_id  in items_to_save:
+#                     item_as_string = json.dumps({'id' : my_id, 'document': my_info}, cls=JSONDateTimeEncoder)
+#                     myfile.write(item_as_string+'\n')
+#     # with open(filename,'a') as myfile:
 
-def load_items(filename='jeedom_metrics*.json'):
-    """Load items from a file"""
-    for afile in glob.glob(filename):
+
+def get_files(filemask='jeedom_metrics*.zip'):
+    """List files"""
+    for afile in glob.glob(filemask):
         if os.path.isfile(afile):
-            logger.info('Integration de %s' % afile)
-            with open(afile,'r') as myfile:
+            yield afile
+        
+
+def load_items(filename):
+    """Load items from a file"""
+    logger.info('Integration de %s' % filename)
+    with zipfile.ZipFile.open(filename) as myzip:
+        for afileinfo in myzip.infolist():
+            with myzip.open(afileinfo.filename,'r') as myfile:
                 for line in myfile:
                     try:
                         item_as_dict = json.loads(line)
@@ -240,7 +270,7 @@ def load_items(filename='jeedom_metrics*.json'):
                     except:
                         logger.exception(u'Cannot parse line %s' % line)
                         continue
-            os.remove(afile)
+            
 
 class JeedomAction:
     @staticmethod
@@ -248,9 +278,15 @@ class JeedomAction:
         index_name=kwargs.get('elastic_index', 'jeedom')
         # ES = init_es_connection(kwargs.get('elastic_url'), index_name=index_name)
         ES = ElasticIndexer(kwargs.get('elastic_url'), index_name=index_name)
-        for my_info, my_id in load_items():
-            ES.push(my_info, my_id, index_name=my_info['timestamp'].strftime(ES.index_template), save=False)
+        for afile in get_files():
+            fileresult = True
+            for my_info, my_id in load_items(afile):
+                if ES.push(my_info, my_id, index_name=my_info['timestamp'].strftime(ES.index_template), save=False) == False:
+                    fileresult = False
+            if fileresult:
+                os.remove(afile)
         ES.flush(save=False)
+        ES.close()
 
 
     @staticmethod
@@ -271,6 +307,7 @@ class JeedomAction:
     #            ES.push(my_info, my_id)
     #        if ES.flush() and os.path.isfile('jeedom_metrics.json'):
     #            os.remove('jeedom_metrics.json')
+        ES.close()
 
 
 
