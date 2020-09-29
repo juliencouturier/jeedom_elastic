@@ -127,7 +127,7 @@ class ElasticIndexer(object):
     def push(self, my_info, my_id, save=True, index_name=None):
         self.batch.append({
             '_index': index_name or self.index_name,
-            '_type': 'jeedom_metric',
+            # '_type': 'jeedom_metric',
             '_id': my_id,
             '_source': my_info
         })
@@ -259,7 +259,7 @@ def get_files(filemask='jeedom_metrics*.zip'):
 def load_items(filename):
     """Load items from a file"""
     logger.info('Integration de %s' % filename)
-    with zipfile.ZipFile.open(filename) as myzip:
+    with zipfile.ZipFile(filename, 'r') as myzip:
         for afileinfo in myzip.infolist():
             with myzip.open(afileinfo.filename,'r') as myfile:
                 for line in myfile:
