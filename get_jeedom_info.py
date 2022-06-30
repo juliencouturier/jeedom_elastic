@@ -19,6 +19,10 @@ except:
   print('YAML is not available')
 
 from hashlib import md5
+from tzlocal import get_localzone
+
+SYSTEM_TZ = get_localzone()
+
 
 # jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php'
 # jeedom_key = 'YourJeedomKey'
@@ -96,8 +100,7 @@ class ElasticIndexer(object):
 
         try:
             self.ES = elasticsearch.Elasticsearch(elastic_url.split(','))
-            my_tz = pytz.timezone("Europe/Paris")
-            self.metrics_date = my_tz.localize(datetime.now())
+            self.metrics_date = SYSTEM_TZ.localize(datetime.now())
             self.index_template = index_name
             self.index_name = self.metrics_date.strftime(index_name)
             # if not self.ES.indices.exists(self.index_name):
@@ -189,7 +192,7 @@ def format_items(items_to_save):
 def get_info(ES, jeedom_key, jeedom_url = 'http://127.0.0.1/core/api/jeeApi.php', index_name='jeedom'):
     r = requests.get('%s?apikey=%s&type=fullData' % (jeedom_url, jeedom_key))
     my_tz = pytz.timezone("Europe/Paris")
-    metrics_date = pytz.utc.localize(datetime.now())
+    metrics_date = SYSTEM_TZ.localize(datetime.now())
     cnt = 0
     if r.ok:
         for anobject in r.json():
