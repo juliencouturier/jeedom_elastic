@@ -3,7 +3,7 @@ from elasticsearch.helpers import bulk
 import logging
 from datetime import datetime, timedelta
 from hashlib import md5
-import base64
+import argparse
 
 logger = logging.getLogger('Reindexer')
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
@@ -147,10 +147,10 @@ def downsampler_text(start_date, end_date):
                 }
             })
     bulk(ES, index_data)
-            
-if __name__ == '__main__':
-    my_date = datetime(2020,1,1)
-    while my_date < datetime(2021,1,1):
+
+def main(args):
+    my_date = args.startdate
+    while my_date < args.enddate:
         try:
             downsampler_numeric(my_date,  my_date + timedelta(days=1))
         except elasticsearch.helpers.BulkIndexError:
@@ -160,3 +160,21 @@ if __name__ == '__main__':
         except elasticsearch.helpers.BulkIndexError:
             pass
         my_date += timedelta(days=1)
+
+        toto = datetime.now()
+        toto.replace()
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser('Downsampler', description="Permet de réindexer les données jeedom après les avoir aggrégées")
+    parser.add_argument('-s', "--startdate",
+        help="The Start Date - format YYYY-MM-DD",
+        required=True,
+        type=datetime.fromisoformat
+        default=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1))
+    parser.add_argument('-e', "--enddate",
+        help="The End Date format YYYY-MM-DD (Exclusive)",
+        required=True,
+        type=datetime.fromisoformat,
+        default=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0))
+    args = parser.parse_args()
+    main(args)
