@@ -169,7 +169,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', "--startdate",
         help="The Start Date - format YYYY-MM-DD",
         required=True,
-        type=datetime.fromisoformat
+        type=datetime.fromisoformat,
         default=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1))
     parser.add_argument('-e', "--enddate",
         help="The End Date format YYYY-MM-DD (Exclusive)",
