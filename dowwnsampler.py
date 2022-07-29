@@ -55,7 +55,7 @@ def downsampler_numeric(start_date, end_date):
         }
     }
     index_data = []
-    result = ES.search(query=query, index=start_date.strftime(INDEX_DETAIL_PATERN), size=0 , aggs=aggs)
+    result = ES.search(query=query, index=start_date.strftime(INDEX_DETAIL_PATERN), size=0 , aggs=aggs, request_timeout=60)
     for term_bucket in result['aggregations']['terms']['buckets']:
         objet, equipement, commande = term_bucket['key'][0], term_bucket['key'][1], term_bucket['key'][2]
         for date_bucket in term_bucket['timestamp']['buckets']:
@@ -79,7 +79,7 @@ def downsampler_numeric(start_date, end_date):
                     'value_stats' : date_bucket['value_stats']
                 }
             })
-    bulk(ES, index_data)
+    bulk(ES, index_data, max_retries=10, chunk_size=500, request_timeout=60*3)
 
 def downsampler_text(start_date, end_date):
     query = {
