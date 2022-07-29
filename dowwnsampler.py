@@ -146,7 +146,7 @@ def downsampler_text(start_date, end_date):
                     'count' : date_bucket['doc_count']
                 }
             })
-    bulk(ES, index_data)
+    bulk(ES, index_data, max_retries=10, chunk_size=500, request_timeout=60*3)
 
 def main(args):
     my_date = args.startdate
