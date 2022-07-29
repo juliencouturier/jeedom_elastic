@@ -152,18 +152,15 @@ def main(args):
     while my_date < args.enddate:
         try:
             my_gen = downsampler_numeric(my_date,  my_date + timedelta(days=1))
-            bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
+            result = bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
         except elasticsearch.helpers.BulkIndexError:
-            logger.exception('Erreur à l\'indexation numeric')
+            logger.exception('Erreur à l\'indexation numeric : %s', result)
         try:
             my_gen = downsampler_text(my_date,  my_date + timedelta(days=1))
-            bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
+            result = bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
         except elasticsearch.helpers.BulkIndexError:
-            logger.exception('Erreur à l\'indexation text')
+            logger.exception('Erreur à l\'indexation text : %s', result)
         my_date += timedelta(days=1)
-
-        toto = datetime.now()
-        toto.replace()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Downsampler', description="Permet de réindexer les données jeedom après les avoir aggrégées")
