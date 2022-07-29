@@ -68,7 +68,7 @@ def downsampler_numeric(start_date, end_date):
                     id_calc.update(aval.strftime('%Y-%m-%d %H:%M:%S').encode('utf-8'))
                 else:
                     id_calc.update(str(aval).encode('utf-8'))
-            index_data.append({
+            yield {
                 '_index': timestamp.strftime(INDEX_AGG_PATERN),
                 '_id': id_calc.digest().hex(),
                 '_source': {
@@ -78,8 +78,7 @@ def downsampler_numeric(start_date, end_date):
                     'commande' : commande,
                     'value_stats' : date_bucket['value_stats']
                 }
-            })
-    bulk(ES, index_data, max_retries=10, chunk_size=500, request_timeout=60*3)
+            }
 
 def downsampler_text(start_date, end_date):
     query = {
@@ -134,7 +133,7 @@ def downsampler_text(start_date, end_date):
                     id_calc.update(aval.strftime('%Y-%m-%d %H:%M:%S').encode('utf-8'))
                 else:
                     id_calc.update(str(aval).encode('utf-8'))
-            index_data.append({
+            yield {
                 '_index': timestamp.strftime(INDEX_AGG_PATERN),
                 '_id': id_calc.digest().hex(),
                 '_source': {
@@ -145,20 +144,22 @@ def downsampler_text(start_date, end_date):
                     'value_text': value_text,
                     'count' : date_bucket['doc_count']
                 }
-            })
-    bulk(ES, index_data, max_retries=10, chunk_size=500, request_timeout=60*3)
+            }
+    
 
 def main(args):
     my_date = args.startdate
     while my_date < args.enddate:
         try:
-            downsampler_numeric(my_date,  my_date + timedelta(days=1))
+            my_gen = downsampler_numeric(my_date,  my_date + timedelta(days=1))
+            bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
         except elasticsearch.helpers.BulkIndexError:
-            pass
+            logger.exception('Erreur à l\'indexation numeric')
         try:
-            downsampler_text(my_date,  my_date + timedelta(days=1))
+            my_gen = downsampler_text(my_date,  my_date + timedelta(days=1))
+            bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
         except elasticsearch.helpers.BulkIndexError:
-            pass
+            logger.exception('Erreur à l\'indexation text')
         my_date += timedelta(days=1)
 
         toto = datetime.now()
