@@ -14,6 +14,11 @@ INDEX_DETAIL_PATERN = 'jeedom.%Y.%m'
 
 ES = elasticsearch.Elasticsearch(['http://192.168.10.61:9200','http://192.168.10.62:9200'])
 
+def clear_nan(my_dict):
+    return {
+        key : clear_nan(val) if isinstance(val, dict) else val for key, val in my_dict.items() if val!='NaN'
+    }
+
 def downsampler_numeric(start_date, end_date):
     query = {
             "bool": {
@@ -45,7 +50,8 @@ def downsampler_numeric(start_date, end_date):
             "timestamp": {
             "date_histogram": {
                 "field": "timestamp",
-                "fixed_interval": "1h"
+                "fixed_interval": "1h",
+                "min_doc_count" : 1
             },
                 "aggs": {
                 "value_stats" : { "extended_stats": { "field": "value_numeric" } }
@@ -54,7 +60,6 @@ def downsampler_numeric(start_date, end_date):
         }
         }
     }
-    index_data = []
     result = ES.search(query=query, index=start_date.strftime(INDEX_DETAIL_PATERN), size=0 , aggs=aggs, request_timeout=60)
     for term_bucket in result['aggregations']['terms']['buckets']:
         objet, equipement, commande = term_bucket['key'][0], term_bucket['key'][1], term_bucket['key'][2]
@@ -68,7 +73,7 @@ def downsampler_numeric(start_date, end_date):
                     id_calc.update(aval.strftime('%Y-%m-%d %H:%M:%S').encode('utf-8'))
                 else:
                     id_calc.update(str(aval).encode('utf-8'))
-            yield {
+            elt = {
                 '_index': timestamp.strftime(INDEX_AGG_PATERN),
                 '_id': id_calc.digest().hex(),
                 '_source': {
@@ -76,9 +81,11 @@ def downsampler_numeric(start_date, end_date):
                     'objet' : objet,
                     'equipement' : equipement,
                     'commande' : commande,
-                    'value_stats' : date_bucket['value_stats']
+                    'value_stats' : clear_nan(date_bucket['value_stats'])
                 }
             }
+            # print(elt)
+            yield elt
 
 def downsampler_text(start_date, end_date):
     query = {
@@ -119,7 +126,6 @@ def downsampler_text(start_date, end_date):
         }
       }
     }
-    index_data = []
     result = ES.search(query=query, index=start_date.strftime(INDEX_DETAIL_PATERN), size=0 , aggs=aggs)
     for term_bucket in result['aggregations']['terms']['buckets']:
         objet, equipement, commande, value_text = term_bucket['key'][0], term_bucket['key'][1], term_bucket['key'][2], term_bucket['key'][3]
@@ -133,7 +139,7 @@ def downsampler_text(start_date, end_date):
                     id_calc.update(aval.strftime('%Y-%m-%d %H:%M:%S').encode('utf-8'))
                 else:
                     id_calc.update(str(aval).encode('utf-8'))
-            yield {
+            elt = {
                 '_index': timestamp.strftime(INDEX_AGG_PATERN),
                 '_id': id_calc.digest().hex(),
                 '_source': {
@@ -145,6 +151,8 @@ def downsampler_text(start_date, end_date):
                     'count' : date_bucket['doc_count']
                 }
             }
+            # print(elt)
+            yield elt
     
 
 def main(args):
@@ -152,14 +160,16 @@ def main(args):
     while my_date < args.enddate:
         try:
             my_gen = downsampler_numeric(my_date,  my_date + timedelta(days=1))
-            result = bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
+            bulk(ES, my_gen, max_retries=10, chunk_size=10, request_timeout=60*3, stats_only=True)
         except elasticsearch.helpers.BulkIndexError:
-            logger.exception('Erreur à l\'indexation numeric : %s', result)
+            logger.exception('Erreur à l\'indexation numeric')
+            raise
         try:
             my_gen = downsampler_text(my_date,  my_date + timedelta(days=1))
-            result = bulk(ES, my_gen, max_retries=10, chunk_size=500, request_timeout=60*3)
+            bulk(ES, my_gen, max_retries=10, chunk_size=10, request_timeout=60*3, stats_only=True)
         except elasticsearch.helpers.BulkIndexError:
-            logger.exception('Erreur à l\'indexation text : %s', result)
+            logger.exception('Erreur à l\'indexation text')
+            raise
         my_date += timedelta(days=1)
 
 if __name__ == '__main__':
