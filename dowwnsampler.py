@@ -160,13 +160,13 @@ def main(args):
     while my_date < args.enddate:
         try:
             my_gen = downsampler_numeric(my_date,  my_date + timedelta(days=1))
-            bulk(ES, my_gen, max_retries=10, chunk_size=10, request_timeout=60*3, stats_only=True)
+            bulk(ES, my_gen, max_retries=10, chunk_size=750, request_timeout=60*3, stats_only=True)
         except elasticsearch.helpers.BulkIndexError:
             logger.exception('Erreur à l\'indexation numeric')
             raise
         try:
             my_gen = downsampler_text(my_date,  my_date + timedelta(days=1))
-            bulk(ES, my_gen, max_retries=10, chunk_size=10, request_timeout=60*3, stats_only=True)
+            bulk(ES, my_gen, max_retries=10, chunk_size=750, request_timeout=60*3, stats_only=True)
         except elasticsearch.helpers.BulkIndexError:
             logger.exception('Erreur à l\'indexation text')
             raise
