@@ -7,7 +7,7 @@ import argparse
 import requests
 import elasticsearch
 from elasticsearch.helpers import bulk
-from datetime import datetime
+from datetime import datetime, timedelta
 from json import JSONEncoder
 import json
 import glob
@@ -326,6 +326,8 @@ if __name__ == '__main__':
                         help='Elastic index to store data')
     parser.add_argument('-c', '--config', type=argparse.FileType('r'),
                         help='JSON or YAML config File with those parameters')
+    parser.add_argument('-s', '--service', type=bool,
+                        help='Make collect continuous')
     parser.add_argument('action', nargs='?', type=str, choices=['get_from_jeedom', 'restore'], default='get_from_jeedom')
     args = parser.parse_args()
     # create console handler and set level to debug
@@ -348,7 +350,17 @@ if __name__ == '__main__':
             config_dict = json.load(args.config)
         except:
             config_dict = yaml.parse(args.config)
-        method(**config_dict)
     else:
-        method(**args.__dict__)
+        config_dict = args.__dict__
+
+    if args.service is True:
+        last_call = datetime.now()
+        while True:            
+            method(**config_dict)
+            sleep_time = timedelta(minutes=1) - (datetime.now() - last_call)
+            last_call = datetime.now()
+            if sleep_time.total_seconds() > 0:
+                time.sleep(sleep_time.total_seconds())            
+    else:
+        method(**config_dict)
 
